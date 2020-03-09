@@ -63,6 +63,21 @@ names(personal_income_per_cap)[1] <- "state"
 personal_income_per_cap$year <- as.numeric(personal_income_per_cap$year)
 
 
+# source: https://www.cdc.gov/nchs/nvss/marriage-divorce.htm
+# read the file, make long format, delete the first column; edit col name of state; edit col name of state and change col formats
+marriage <- read_xlsx("marriage-rates.xlsx", skip = 5, col_names = TRUE, n_max = 53)[2:52, ] %>%
+  gather(year, marriage_rate, "2018":"1999") %>% select(-2, -3)
+names(marriage)[1] <- "state"
+marriage$year <- as.numeric(marriage$year)
+marriage$marriage_rate <- as.numeric(marriage$marriage_rate)
+
+divorce <- read_xlsx("divorce-rates.xlsx", skip = 5, col_names = TRUE, n_max = 53)[2:52, ] %>%
+  gather(year, divorce_rate, "2018":"1999") %>% select(-2, -3)
+names(divorce)[1] <- "state"
+divorce$year <- as.numeric(divorce$year)
+divorce$divorce_rate <- as.numeric(divorce$divorce_rate)
+
+
 # source: https://www.openicpsr.org/openicpsr/project/105583/version/V3/view;jsessionid=5A68D3A66B257C49163707BF7B76B1EE
 # mini processing of alcohol consumption data
 alco_consumption <- read.csv("alco_consumption.csv") %>% select(state=state, year=year, 
@@ -216,12 +231,16 @@ population$state <- tolower(population$state)
 poverty$state <- tolower(poverty$state)
 overdose$year = as.integer(overdose$year)
 
+marriage$state <- tolower(marriage$state)
+divorce$state <- tolower(divorce$state)
+
 # join all panel datas
 panel_data <- full_join(overdose, legal, by=c("state", "year")) %>%
   full_join(crime, by=c("state", "year")) %>% full_join(gdp_per_cap_real, by=c("state", "year")) %>%
   full_join(personal_income_per_cap, by=c("state", "year")) %>% full_join(unemployment, by=c("state", "year")) %>%
   full_join(population, by=c("state", "year")) %>% full_join(alco_consumption, by=c("state", "year")) %>%
-  full_join(poverty, by=c("state", "year")) %>% full_join(sex_and_race, by=c("state", "year"))
+  full_join(poverty, by=c("state", "year")) %>% full_join(sex_and_race, by=c("state", "year")) %>%
+  full_join(marriage, by=c("state", "year")) %>% full_join(divorce, by=c("state", "year"))
 
 # prepare data for analysis
 panel_data_clear <- subset(panel_data, !(state %in% c("puerto rico", "new england", "mideast", 
@@ -232,7 +251,7 @@ panel_data_clear <- subset(panel_data, !(state %in% c("puerto rico", "new englan
                     mutate(med = replace_na(med, 0),
                            full = replace_na(full, 0)) %>%
                     filter(year >= 1999) %>%
-                    arrange(state, year)
+                    arrange(state, year) 
 
 # if you need to save data in csv format, use the next command:
 # write.csv(panel_data_clear, "panel.csv")
@@ -262,7 +281,7 @@ panel_data_clear %>%
 
 ggcorrplot(cor((panel_data_clear %>% 
                   select(-c("state", "population", "year", "total_crime_on100k", "alco_consumption",
-                            "percent_male", "percent_black", "percent_hisp_origin")) %>%
+                            "percent_male")) %>%
                   drop_na())), 
            lab = TRUE, lab_size = 5, digits = 2) + 
   theme(axis.text.x = element_text(color = "grey20", size = 10), 

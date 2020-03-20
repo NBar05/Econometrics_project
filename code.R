@@ -215,6 +215,27 @@ a <- a[c(1,2,4,3,5)]
 # and chain: it's the end of huge processing
 sex_and_race <- rbind(sex_and_race, a)
 
+
+#processing databases with deaths grouped by different causes
+deaths_1 <- read.delim("alco_or_drug_or_others.txt") %>%
+  mutate(rate = Deaths / Population * 100000) %>% 
+  select(c(2, 4, 6, 11)) %>% drop_na() %>%
+  spread(MCD...Drug.Alcohol.Induced, rate)
+names(deaths_1) <- c("state", "year", "total_d", "alco_d", "other_d", "drug_d")
+
+deaths_2 <- read.delim("different_deaths.txt") %>%
+  mutate(rate = Deaths / Population * 100000) %>% 
+  select(c(2, 4, 6, 11)) %>% drop_na() %>%
+  spread(UCD...Injury.Intent, rate) %>% select(-c(4, 5, 7))
+names(deaths_2) <- tolower(names(deaths_2))
+
+deaths_3 <- read.delim("more_deaths.txt") %>%
+  mutate(rate = Deaths / Population * 100000) %>%
+  select(c(2, 4, 6, 11)) %>% drop_na() %>%
+  spread(MCD...Drug.Alcohol.Induced.Cause, rate)
+names(deaths_3) <- tolower(names(deaths_3))
+names(deaths_3) <- c("state", "year", "1", "2", "3", "4", "5", "6", "7", "8")
+
 # some cleaning
 rm(vital, a, b, b1, b2, data)
 
@@ -233,6 +254,9 @@ overdose$year = as.integer(overdose$year)
 
 marriage$state <- tolower(marriage$state)
 divorce$state <- tolower(divorce$state)
+deaths_1$state <- tolower(deaths_1$state)
+deaths_2$state <- tolower(deaths_2$state)
+deaths_3$state <- tolower(deaths_3$state)
 
 # join all panel datas
 panel_data <- full_join(overdose, legal, by=c("state", "year")) %>%
@@ -240,7 +264,9 @@ panel_data <- full_join(overdose, legal, by=c("state", "year")) %>%
   full_join(personal_income_per_cap, by=c("state", "year")) %>% full_join(unemployment, by=c("state", "year")) %>%
   full_join(population, by=c("state", "year")) %>% full_join(alco_consumption, by=c("state", "year")) %>%
   full_join(poverty, by=c("state", "year")) %>% full_join(sex_and_race, by=c("state", "year")) %>%
-  full_join(marriage, by=c("state", "year")) %>% full_join(divorce, by=c("state", "year"))
+  full_join(marriage, by=c("state", "year")) %>% full_join(divorce, by=c("state", "year")) %>%
+  full_join(deaths_1, by=c("state", "year")) %>% full_join(deaths_2, by=c("state", "year")) %>%
+  full_join(deaths_3, by=c("state", "year"))
 
 # prepare data for analysis
 panel_data_clear <- subset(panel_data, !(state %in% c("puerto rico", "new england", "mideast", 
@@ -256,6 +282,9 @@ panel_data_clear <- subset(panel_data, !(state %in% c("puerto rico", "new englan
 # if you need to save data in csv format, use the next command:
 # write.csv(panel_data_clear, "panel.csv")
 
+
+
+# V I S U A L I Z A T I O N
 # Graphic analysis
 panel_data_clear %>% gather(crime, rate, violent_crime_on100k:property_crime_on100k) %>%
   group_by(year, crime) %>% summarise(avg_rate = mean(rate, na.rm = TRUE)) %>% 
@@ -279,14 +308,14 @@ panel_data_clear %>%
   ggtitle("Различный разброс данных по передозировкам") +
   labs(x = "Статус рекреационной (полной) легализации", y = "Количество передозировок на 100.000 человек")
 
-ggcorrplot(cor((panel_data_clear %>% 
-                  select(-c("state", "population", "year", "total_crime_on100k", "alco_consumption",
+ggcorrplot(cor((panel_data_clear %>%
+                  select(-c("state", "population", "year", "total_crime_on100k", "full",
                             "percent_male")) %>%
                   drop_na())), 
-           lab = TRUE, lab_size = 5, digits = 2) + 
+           lab = TRUE, lab_size = 5, digits = 1) + 
   theme(axis.text.x = element_text(color = "grey20", size = 10), 
         axis.text.y = element_text(color = "grey20", size = 10), 
-        text = element_text(size = 20))
+        text = element_text(size = 10))
 
 # prepare mini-data to visualise
 legal <- legal %>%
@@ -373,4 +402,16 @@ summary_statistics_by_year <- summary_statistics_by_year[c(8, 1:7)]
 
 # s <- summary_statistics_by_year %>% filter(year %in% c(2000, 2005, 2010, 2015))
 
+
+
+# M O D E L S
 # that's all
+
+library(plm)
+reg1 = plm(opioid_death_rate ~ med + personal_income_per_cap + property_crime_on100k + percent_black + divorce_rate,
+           data = panel_data,
+           index = c("state", "year"),
+           effect = "time",
+           model = "random")
+summary(reg1)
+

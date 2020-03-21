@@ -2,6 +2,7 @@ library(dplyr)
 library(tidyr)
 library(psych)
 library(readxl)
+library(sjmisc)
 library(ggplot2)
 library(stargazer)
 library(ggcorrplot)
@@ -23,7 +24,7 @@ for (i in c(1:length(naming))) {
 }
 # change order of columns and redact their names
 overdose <- overdose[c(1,4,2,3)]
-names(overdose) <- c("state", "year", "opioid_death_rate", "alldrugs_death_rate")
+names(overdose) <- c("state", "year", "opioid_d_adj", "alldrugs_d_adj")
 overdose$year <- as.numeric(as.character(overdose$year))
 
 # read excel file with information about legalization years by state (hand-made)
@@ -112,26 +113,53 @@ rm(a, data, block, states, property_crime_on100k, violent_crime_on100k, total_cr
 
 
 # source: https://www2.census.gov/programs-surveys/popest/datasets
-# read two databases, make some manipulations to get total population by state by year
-pop <- read.csv("pop/pop00-10.csv")
-pop00_10 <- pop %>% filter(SEX == 0,  ORIGIN == 0, RACE == 0, AGEGRP ==0) %>% 
+# read two databases, make some manipulations to get total population by state by year and age groups
+pop <- read.csv("pop/pop00-10.csv") 
+
+pop_and_age_grp_00_10 <- pop %>% filter(SEX == 0,  ORIGIN == 0, RACE == 0, AGEGRP !=0) %>% 
   gather(year, pop, "POPESTIMATE2000":"POPESTIMATE2009") %>%
-  group_by(NAME, year) %>% summarise(population=sum(pop))
+  group_by(NAME, year) %>% summarise(population=sum(pop),
+                                     age_0_14=sum(subset(pop, AGEGRP %in% c(1:3))) / population,
+                                     age_15_24=sum(subset(pop, AGEGRP %in% c(4:5))) / population,
+                                     age_25_44=sum(subset(pop, AGEGRP %in% c(6:9))) / population,
+                                     age_45_59=sum(subset(pop, AGEGRP %in% c(10:12))) / population,
+                                     age_60_more=sum(subset(pop, AGEGRP %in% c(13:18))) / population) %>% data.frame()
 
 pop <- read.csv("pop/pop10-18.csv")
-pop10_18 <- pop %>% filter(SEX == 0, ORIGIN == 0) %>% 
+
+pop_and_age_grp_10_18 <- pop %>% filter(SEX == 0, ORIGIN == 0) %>% 
   gather(year, pop, "POPESTIMATE2010":"POPESTIMATE2018") %>%
-  group_by(NAME, year) %>% summarise(population=sum(pop))
+  group_by(NAME, year) %>% summarise(population=sum(pop),
+                                     age_0_14=sum(subset(pop, AGE %in% c(0:14))) / population,
+                                     age_15_24=sum(subset(pop, AGE %in% c(15:24))) / population,
+                                     age_25_44=sum(subset(pop, AGE %in% c(25:44))) / population,
+                                     age_45_59=sum(subset(pop, AGE %in% c(45:59))) / population,
+                                     age_60_more=sum(subset(pop, AGE %in% c(60:85))) / population) %>% data.frame()
 
 # chain two tables
-population <- rbind(pop00_10, pop10_18)
+population <- rbind(pop_and_age_grp_00_10, pop_and_age_grp_10_18)
+# chain with region and divison codes
+population <- pop %>% select(REGION, DIVISION, NAME) %>% distinct() %>% right_join(population, by="NAME")
+
 # make some fixing
 population$year <- substr(population$year, 12, 15)
-names(population)[1] <- "state"
+names(population)[1:3] <- c("reg", "div", "state")
 population$year <- as.numeric(population$year)
 
+# make dummy variables for region and division
+dummy_reg <- population %>% select(reg) %>% to_dummy(var.name = "label")
+names(dummy_reg) <- c("northeast", "midwest", "south", "west")
+
+dummy_div <- population %>% select(div) %>% to_dummy(var.name = "label")
+names(dummy_div) <- tolower(c("New England", "Middle Atlantic", "East North Central", "West North Central",
+                      "South Atlantic", "East South Central", "West South Central", "Mountain", "Pacific"))
+
+# chain dummy varibales with data
+population <- cbind(population, dummy_reg) %>% select(-c(1,2))
+#population <- cbind(population, dummy_div)
+
 # clean memory
-rm(pop, pop00_10, pop10_18)
+rm(pop, pop_and_age_grp_00_10, pop_and_age_grp_10_18)
 
 
 # source: http://www.census.gov/data/tables/time-series/demo/income-poverty/cps-pov/pov-46.html
@@ -215,8 +243,12 @@ a <- a[c(1,2,4,3,5)]
 # and chain: it's the end of huge processing
 sex_and_race <- rbind(sex_and_race, a)
 
+# some cleaning
+rm(vital, a, b, b1, b2, data)
 
-#processing databases with deaths grouped by different causes
+
+# https://wonder.cdc.gov
+# processing databases with deaths grouped by different causes
 deaths_1 <- read.delim("alco_or_drug_or_others.txt") %>%
   mutate(rate = Deaths / Population * 100000) %>% 
   select(c(2, 4, 6, 11)) %>% drop_na() %>%
@@ -226,18 +258,16 @@ names(deaths_1) <- c("state", "year", "total_d", "alco_d", "other_d", "drug_d")
 deaths_2 <- read.delim("different_deaths.txt") %>%
   mutate(rate = Deaths / Population * 100000) %>% 
   select(c(2, 4, 6, 11)) %>% drop_na() %>%
-  spread(UCD...Injury.Intent, rate) %>% select(-c(4, 5, 7))
+  spread(UCD...Injury.Intent, rate) %>% select(-c(4, 5, 7, 8))
 names(deaths_2) <- tolower(names(deaths_2))
 
 deaths_3 <- read.delim("more_deaths.txt") %>%
   mutate(rate = Deaths / Population * 100000) %>%
   select(c(2, 4, 6, 11)) %>% drop_na() %>%
-  spread(MCD...Drug.Alcohol.Induced.Cause, rate)
-names(deaths_3) <- tolower(names(deaths_3))
-names(deaths_3) <- c("state", "year", "1", "2", "3", "4", "5", "6", "7", "8")
+  spread(MCD...Drug.Alcohol.Induced.Cause, rate) %>% select(1:2, 5, 7:10)
+names(deaths_3) <- c("state", "year", "drug_other_causes", "drug_homicide",
+                     "drug_suicide", "drug_undetermined", "drug_unintentional")
 
-# some cleaning
-rm(vital, a, b, b1, b2, data)
 
 
 # Avengers, assemble!
@@ -250,8 +280,6 @@ personal_income_per_cap$state <- tolower(personal_income_per_cap$state)
 unemployment$state <- tolower(unemployment$state)
 population$state <- tolower(population$state)
 poverty$state <- tolower(poverty$state)
-overdose$year = as.integer(overdose$year)
-
 marriage$state <- tolower(marriage$state)
 divorce$state <- tolower(divorce$state)
 deaths_1$state <- tolower(deaths_1$state)
@@ -274,8 +302,8 @@ panel_data_clear <- subset(panel_data, !(state %in% c("puerto rico", "new englan
                                                       "southwest", "rocky mountain", "far west", 
                                                       "northeast region", "midwest region", 
                                                       "south region", "west region", "us total", "united states"))) %>%
-                    mutate(med = replace_na(med, 0),
-                           full = replace_na(full, 0)) %>%
+                    mutate(med = tidyr::replace_na(med, 0),
+                           full = tidyr::replace_na(full, 0)) %>%
                     filter(year >= 1999) %>%
                     arrange(state, year) 
 
@@ -299,12 +327,12 @@ panel_data_clear %>% gather(crime, rate, violent_crime_on100k:property_crime_on1
         text = element_text(size = 10))
 
 panel_data_clear %>% 
-  ggplot(aes(x=factor(med), y=alldrugs_death_rate)) + geom_boxplot() +
+  ggplot(aes(x=factor(med), y=alldrugs_d_adj)) + geom_boxplot() +
   ggtitle("Различный разброс данных по передозировкам") +
   labs(x = "Статус медицинской легализации", y = "Количество передозировок на 100.000 человек")
 
 panel_data_clear %>% 
-  ggplot(aes(x=factor(full), y=alldrugs_death_rate)) + geom_boxplot() +
+  ggplot(aes(x=factor(full), y=alldrugs_d_adj)) + geom_boxplot() +
   ggtitle("Различный разброс данных по передозировкам") +
   labs(x = "Статус рекреационной (полной) легализации", y = "Количество передозировок на 100.000 человек")
 
@@ -319,8 +347,8 @@ ggcorrplot(cor((panel_data_clear %>%
 
 # prepare mini-data to visualise
 legal <- legal %>%
-  mutate(med = replace_na(med, 0),
-         full = replace_na(full, 0),
+  mutate(med = tidyr::replace_na(med, 0),
+         full = tidyr::replace_na(full, 0),
          status = med + full,
          state = tolower(state))
 
@@ -333,7 +361,7 @@ selected_states <- data_for_plot %>%
 
 # plot1
 plot1 <- ggplot(subset(data_for_plot, state %in% c(selected_states[[1]])), 
-                aes(x = factor(year), y = opioid_death_rate, col = factor(status))) + 
+                aes(x = factor(year), y = opioid_d_adj, col = factor(status))) + 
   geom_line(aes(group = state), size = 2) + facet_wrap(. ~ state) +
   ggtitle("Граф.1 Количество смертей от передозировок опиоидами (на 100 000 населения штата)") + 
   theme(axis.text.x = element_text(angle = 90, size = 10),
@@ -352,7 +380,7 @@ plot1
 
 # plot2
 plot2 <- data_for_plot %>% filter(year > 1998) %>%
-  ggplot(aes(x = factor(year), y = opioid_death_rate, col = factor(status))) + 
+  ggplot(aes(x = factor(year), y = drug_d, col = factor(status))) + 
   geom_boxplot() + 
   ggtitle("Граф.2 Динамика количества передозировок опиоидами") +
   labs(x = "Годы", y = "Количество передозировок на 100.000 чел.") +
@@ -370,7 +398,7 @@ plot2
 
 # plot3
 plot3 <- data_for_plot %>% filter(year > 1998) %>%
-  ggplot(aes(x = factor(year), y = alldrugs_death_rate, col = factor(status))) + 
+  ggplot(aes(x = factor(year), y = alldrugs_d_adj, col = factor(status))) + 
   geom_boxplot() + 
   ggtitle("Граф.3 Динамика количества передозировок всеми типами наркотиков") +
   labs(x = "Годы", y = "Количество передозировок на 100.000 чел.") +
@@ -391,9 +419,10 @@ plot3
 #install.packages("psych")
 # make summary
 data <- panel_data_clear %>% select(-c(1, 3:4)) %>% group_by(year)
-summary_statistics_by_year <- data.frame(describeBy(data, group="year", mat=TRUE, type=0, digits=2)) %>% select(2, 4:7, 10:11)
+summary_statistics_by_year <- data.frame(describeBy(data, group="year", mat=TRUE, type=0, digits=2)) %>%
+  select(2, 4:7, 10:11)
 # delete unnecessary summary for year
-summary_statistics_by_year <- summary_statistics_by_year[-c(1:21),] %>% drop_na()
+summary_statistics_by_year <- summary_statistics_by_year[-c(1:21), ] %>% drop_na()
 # edit name of the column
 names(summary)[1] <- "year"
 # add column of variables and change order of the columns
@@ -405,13 +434,11 @@ summary_statistics_by_year <- summary_statistics_by_year[c(8, 1:7)]
 
 
 # M O D E L S
-# that's all
-
 library(plm)
-reg1 = plm(opioid_death_rate ~ med + personal_income_per_cap + property_crime_on100k + percent_black + divorce_rate,
+reg1 = plm(opioid_d_adj ~ med + personal_income_per_cap + property_crime_on100k + percent_black + divorce_rate,
            data = panel_data,
            index = c("state", "year"),
            effect = "time",
-           model = "random")
+           model = "within")
 summary(reg1)
 

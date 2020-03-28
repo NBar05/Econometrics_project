@@ -1,5 +1,5 @@
 # Econometrics_project
-Processing and visualizing data
+Processing and visualizing data + some econometric models
 
 Econometric project of 3rd year students
 
